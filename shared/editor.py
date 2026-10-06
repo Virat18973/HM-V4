@@ -35,13 +35,6 @@ def _ver(key):
     return st.session_state[key]
 
 
-def _bump_sinter_editors():
-    """The sinter dashboard resets its own editors through counters named like *_ver; move them on so a changed table shows."""
-    for k in list(st.session_state.keys()):
-        if isinstance(k, str) and k.startswith("sinter__") and k.endswith("_ver") and isinstance(st.session_state[k], int):
-            st.session_state[k] += 1
-
-
 # ------------------------------------------------------------------------------------------------ sinter
 def sinter_view(df, avail):
     v = df.copy()
@@ -94,12 +87,15 @@ def sinter_from_view(edited, template):
     return d[cols], avail, []
 
 
-def sinter_editor(sns=None):
-    S = st.session_state
-    if "sinter__master_df" not in S:
+def sinter_editor(S=None, on_change=None):
+    """Editable sinter master with a Confirm step.  `S` is the dashboard's state: pass `st.session_state` from inside the sinter
+    dashboard (inside the combined app that name is its prefixed view, so the same call works in both places).
+    `on_change(text)` is called after a confirmed edit (the dashboard's own 'rerun required' marker)."""
+    S = st.session_state if S is None else S
+    if "master_df" not in S:
         return
-    df, avail = S["sinter__master_df"], S["sinter__available"]
-    ver = _ver("_sed_ver")
+    df, avail = S["master_df"], S["available"]
+    ver = int(S.get("_sed_ver", 0))
     st.markdown("<div class='sect'>Edit the uploaded materials<small>availability, price, stock and chemistry; nothing changes until you confirm</small></div>", unsafe_allow_html=True)
     nc = st.column_config.NumberColumn
     groups = sorted(set(df["Group"].astype(str)) | {"Iron_ore", "Recycle", "Flux", "Fuel"})
@@ -128,18 +124,22 @@ def sinter_editor(sns=None):
         if probs:
             st.markdown("<div class='notice r'><b>Not applied.</b><br>" + "<br>".join(f"- {p}" for p in probs[:8]) + "</div>", unsafe_allow_html=True)
         else:
-            same = newdf.round(9).equals(df.reindex(newdf.index).round(9)) and list(newdf.index) == list(df.index) and newav == {m: bool(avail.get(m, True)) for m in df.index}
+            same = (list(newdf.index) == list(df.index) and newdf.round(9).equals(df.reindex(newdf.index).round(9))
+                    and newav == {m: bool(avail.get(m, True)) for m in df.index})
             if same:
                 st.markdown("<div class='notice'>No changes to apply.</div>", unsafe_allow_html=True)
             else:
-                S["sinter__master_df"] = newdf
-                S["sinter__available"] = newav
-                src = str(S.get("sinter__source", ""))
+                S["master_df"] = newdf
+                S["available"] = newav
+                src = str(S.get("source", ""))
                 if not src.endswith("(edited)"):
-                    S["sinter__source"] = src + " (edited)"
+                    S["source"] = src + " (edited)"
                 S["_sed_ver"] = ver + 1
                 S["_sed_done"] = "Sinter materials updated. Run the sinter model again to use them."
-                _bump_sinter_editors()
+                for k in ("rm_editor", "merged_master_editor"):          # the dashboard's other material tables start again from the new master
+                    S.pop(k, None)
+                if on_change:
+                    on_change("Upload & Settings (materials edited)")
                 st.rerun()
     if S.get("_sed_done"):
         st.markdown(f"<div class='notice g'>{S.pop('_sed_done')}</div>", unsafe_allow_html=True)
